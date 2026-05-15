@@ -398,6 +398,7 @@ schema = ar.Schema({
     "id": ar.Int64(nullable=False, unique=True),
     "email": ar.Email(nullable=False),
     "revenue": ar.Float64(nullable=True, min=0),
+    "created_at": ar.Timestamp(nullable=False, format="%Y-%m-%d"),
 })
 
 result = ar.validate(frame, schema)
