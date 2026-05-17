@@ -49,6 +49,7 @@ from .schema import (
     Int64,
     Schema,
     String,
+    Timestamp,
     ValidationIssue,
     ValidationResult,
     validate,
@@ -101,6 +102,7 @@ __all__ = [
     "Bool",
     "Email",
     "URL",
+    "Timestamp",
     # Exceptions
     "UnknownStepError",
     "ArnioError",

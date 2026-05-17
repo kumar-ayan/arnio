@@ -20,14 +20,15 @@ class Field:
 
     dtype: str | None = None
     nullable: bool = True
-    min: int | float | None = None
-    max: int | float | None = None
+    min: Any = None
+    max: Any = None
     pattern: str | None = None
     semantic: str | None = None
     allowed: set[Any] | None = None
     unique: bool = False
     min_length: int | None = None
     max_length: int | None = None
+    format: str | None = None
 
 
 @dataclass(frozen=True)
@@ -300,6 +301,30 @@ def URL(*, nullable: bool = True, unique: bool = False) -> Field:
     return Field(dtype="string", nullable=nullable, semantic="url", unique=unique)
 
 
+def Timestamp(
+    *,
+    nullable: bool = True,
+    min: Any = None,
+    max: Any = None,
+    unique: bool = False,
+    format: str | None = None,
+) -> Field:
+    """Create a timestamp schema field."""
+    # Pre-parse boundary values if they are strings for performance.
+    # We assume ISO format for boundary strings by default.
+    min_val = pd.to_datetime(min) if isinstance(min, str) else min
+    max_val = pd.to_datetime(max) if isinstance(max, str) else max
+
+    return Field(
+        dtype="timestamp",
+        nullable=nullable,
+        min=min_val,
+        max=max_val,
+        unique=unique,
+        format=format,
+    )
+
+
 def _validate_column(
     series: pd.Series,
     actual_dtype: str | None,
@@ -309,16 +334,17 @@ def _validate_column(
     issues: list[ValidationIssue] = []
 
     if field_def.dtype is not None and actual_dtype != field_def.dtype:
-        issues.append(
-            ValidationIssue(
-                column=name,
-                rule="dtype",
-                message=(
-                    f"Column {name!r} has dtype {actual_dtype!r}; "
-                    f"expected {field_def.dtype!r}"
-                ),
+        if not (field_def.dtype == "timestamp" and actual_dtype == "string"):
+            issues.append(
+                ValidationIssue(
+                    column=name,
+                    rule="dtype",
+                    message=(
+                        f"Column {name!r} has dtype {actual_dtype!r}; "
+                        f"expected {field_def.dtype!r}"
+                    ),
+                )
             )
-        )
 
     if not field_def.nullable:
         issues.extend(
@@ -354,7 +380,83 @@ def _validate_column(
             )
         )
 
-    if field_def.min is not None or field_def.max is not None:
+    if field_def.dtype == "timestamp":
+        issues.extend(_validate_timestamp(non_null, name, field_def))
+
+    elif field_def.min is not None or field_def.max is not None:
+        numeric = pd.to_numeric(non_null, errors="coerce")
+        invalid_numeric = non_null[numeric.isna()]
+        issues.extend(
+            _row_issues(
+                invalid_numeric,
+                column=name,
+                rule="numeric",
+                message=f"Column {name!r} contains non-numeric values",
+            )
+        )
+        if field_def.min is not None:
+            issues.extend(
+                _row_issues(
+                    non_null[numeric < field_def.min],
+                    column=name,
+                    rule="min",
+                    message=f"Column {name!r} has values below {field_def.min}",
+                )
+            )
+        if field_def.max is not None:
+            issues.extend(
+                _row_issues(
+                    non_null[numeric > field_def.max],
+                    column=name,
+                    rule="max",
+                    message=f"Column {name!r} has values above {field_def.max}",
+                )
+            )
+
+
+def _validate_timestamp(
+    non_null: pd.Series,
+    name: str,
+    field_def: Field,
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    parsed = pd.to_datetime(non_null, format=field_def.format, errors="coerce")
+
+    invalid_format = non_null[parsed.isna()]
+    issues.extend(
+        _row_issues(
+            invalid_format,
+            column=name,
+            rule="format",
+            message=f"Column {name!r} does not match the required timestamp format",
+        )
+    )
+
+    valid_mask = parsed.notna()
+    valid_non_null = non_null[valid_mask]
+    valid_parsed = parsed[valid_mask]
+
+    if field_def.min is not None:
+        issues.extend(
+            _row_issues(
+                valid_non_null[valid_parsed < field_def.min],
+                column=name,
+                rule="min",
+                message=f"Column {name!r} has values below {field_def.min}",
+            )
+        )
+    if field_def.max is not None:
+        issues.extend(
+            _row_issues(
+                valid_non_null[valid_parsed > field_def.max],
+                column=name,
+                rule="max",
+                message=f"Column {name!r} has values above {field_def.max}",
+            )
+        )
+
+    return issues
+
         numeric = pd.to_numeric(non_null, errors="coerce")
         invalid_numeric = non_null[numeric.isna()]
         issues.extend(
